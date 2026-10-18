@@ -1,17 +1,12 @@
--- Asegurar la contraseña del usuario root con una compleja
-ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'RootSuperSeguro2026!';
-FLUSH PRIVILEGES;
-
--- 1. Creamos el usuario para la replicación (Maestro-Esclavo)
-CREATE USER IF NOT EXISTS 'replicador'@'%' IDENTIFIED WITH mysql_native_password BY 'repl123';
+-- 1. Usuario para la replicación (Maestro-Esclavo)
+CREATE USER IF NOT EXISTS 'replicador'@'%' IDENTIFIED BY 'repl123';
 GRANT REPLICATION SLAVE ON *.* TO 'replicador'@'%';
-FLUSH PRIVILEGES;
 
--- 2. Creamos la base de datos de la tienda
+-- 2. Base de datos de la tienda
 CREATE DATABASE IF NOT EXISTS ecommerce;
 USE ecommerce;
 
--- 3. Creamos tus 3 tablas oficiales
+-- 3. Tablas oficiales
 CREATE TABLE IF NOT EXISTS usuarios (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(100),
@@ -36,17 +31,15 @@ CREATE TABLE IF NOT EXISTS catalogo_zapateria (
     stock INT
 );
 
--- 4. Insertamos los datos de prueba iniciales (con contraseña para que puedas probar el login)
-INSERT INTO usuarios (nombre, rol, email, password) 
+-- 4. Datos de prueba iniciales
+INSERT IGNORE INTO usuarios (nombre, rol, email, password)
 VALUES ('Prueba Final CETI', 'Usu', 'ceti@final.com', 'secreta123');
 
 INSERT INTO catalogo_muebles (articulo, precio, stock) VALUES ('Silla Gamer Ejecutiva', 2850.50, 15);
 INSERT INTO catalogo_zapateria (modelo, tALLA, precio, stock) VALUES ('Tenis Deportivos Running', '27.5', 1200.00, 20);
 
--- 5. ASEGURAR EL SGBD (Puntos del pizarrón del profe):
--- Creamos un usuario de aplicación con permisos limitados
-CREATE USER IF NOT EXISTS 'app_user'@'%' IDENTIFIED WITH mysql_native_password BY 'PasswordSeguro123!';
-GRANT SELECT, INSERT, UPDATE, DELETE ON ecommerce.* TO 'app_user'@'%';
+-- 5. Usuario de la aplicación con acceso desde cualquier contenedor (web1, web2)
+CREATE USER IF NOT EXISTS 'app_user'@'%' IDENTIFIED BY 'PasswordSeguro123!';
+GRANT ALL PRIVILEGES ON ecommerce.* TO 'app_user'@'%';
 
--- Aplicamos los cambios de privilegios
 FLUSH PRIVILEGES;

@@ -5,7 +5,7 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 /**
- * Sistema de Autenticación de Doble Factor (2FA) + Protección CSRF
+ * Sistema de Autenticación de Doble Factor (2FA) + Protección CSRF + Verificación de Cuenta
  * PHP + Google Authenticator + validador.py
  */
 
@@ -23,7 +23,7 @@ if (empty($_SESSION['csrf_token'])) {
 }
 
 $conexion = new mysqli(
-    "mysql-primary",
+    "mysql_primary",
     "app_user",
     "PasswordSeguro123!",
     "ecommerce"
@@ -211,8 +211,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         } else {
 
+            // Se agregó el campo 'confirmado' a la consulta
             $stmt = $conexion->prepare(
-                "SELECT id, email, password, secret, rol
+                "SELECT id, email, password, secret, rol, confirmado
                  FROM usuarios
                  WHERE email = ?
                  LIMIT 1"
@@ -237,34 +238,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         password_verify($pass, $user['password'])
                     ) {
 
-                        session_regenerate_id(true);
+                        // Verificación de cuenta confirmada ANTES de pasar al 2FA
+                        if ($user['confirmado'] == 0) {
+                            $mensaje = '<div class="alerta error">Tu cuenta no está confirmada. Revisa el enlace de activación que se generó al registrarte.</div>';
+                        } else {
+                            session_regenerate_id(true);
 
-                        $_SESSION['pending_user_id'] = $user['id'];
-                        $_SESSION['pending_email'] = $user['email'];
-                        $_SESSION['pending_rol'] = $user['rol'];
+                            $_SESSION['pending_user_id'] = $user['id'];
+                            $_SESSION['pending_email'] = $user['email'];
+                            $_SESSION['pending_rol'] = $user['rol'];
 
-                        $secretUser = $user['secret'];
+                            $secretUser = $user['secret'];
 
-                        if (empty($secretUser) || $secretUser === 'N/A') {
-                            $secretUser = generarSecretBase32(32);
+                            if (empty($secretUser) || $secretUser === 'N/A') {
+                                $secretUser = generarSecretBase32(32);
 
-                            $update = $conexion->prepare(
-                                "UPDATE usuarios SET secret = ? WHERE id = ?"
-                            );
+                                $update = $conexion->prepare(
+                                    "UPDATE usuarios SET secret = ? WHERE id = ?"
+                                );
 
-                            if ($update) {
-                                $update->bind_param("si", $secretUser, $user['id']);
-                                $update->execute();
-                                $update->close();
+                                if ($update) {
+                                    $update->bind_param("si", $secretUser, $user['id']);
+                                    $update->execute();
+                                    $update->close();
+                                }
+
+                                $_SESSION['mostrar_qr'] = true;
+                            } else {
+                                $_SESSION['mostrar_qr'] = false;
                             }
 
-                            $_SESSION['mostrar_qr'] = true;
-                        } else {
-                            $_SESSION['mostrar_qr'] = false;
+                            $_SESSION['secret_activo'] = $secretUser;
+                            $mensaje = '<div class="alerta exito">Credenciales correctas. Ingresa tu código 2FA.</div>';
                         }
-
-                        $_SESSION['secret_activo'] = $secretUser;
-                        $mensaje = '<div class="alerta exito">Credenciales correctas. Ingresa tu código 2FA.</div>';
 
                     } else {
                         $mensaje = '<div class="alerta error">Usuario o contraseña incorrectos.</div>';

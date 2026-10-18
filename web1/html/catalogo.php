@@ -1,20 +1,28 @@
 <?php
 session_start();
 
-// 1. Si no han iniciado sesión, van pa' fuera
+// 1. Candado de sesión activa
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
-// NUEVO: 2. Candado de ROL: Si no es cliente, va pa' fuera (Evita el salto por URL)
-if (!isset($_SESSION['user_rol']) || $_SESSION['user_rol'] !== 'cliente') {
-    // Si un admin intenta entrar aquí, lo regresamos a su panel
-    header("Location: crud.php");
-    exit();
+// 2. Generar Token CSRF si no existe
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// NUEVO: 3. Destruir la sesión después de 2 minutos (120 segundos) de inactividad
+// 3. Inicializar el carrito de forma SEGURA
+if (empty($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
+    if (isset($_COOKIE['carrito_guardado'])) {
+        $recuperado = json_decode($_COOKIE['carrito_guardado'], true);
+        $_SESSION['carrito'] = is_array($recuperado) ? $recuperado : [];
+    } else {
+        $_SESSION['carrito'] = [];
+    }
+}
+
+// 4. Control de inactividad
 $tiempo_limite = 120;
 if (isset($_SESSION['ultima_actividad'])) {
     $tiempo_transcurrido = time() - $_SESSION['ultima_actividad'];
@@ -27,46 +35,76 @@ if (isset($_SESSION['ultima_actividad'])) {
 }
 $_SESSION['ultima_actividad'] = time();
 
-// NUEVO: 4. Generar Token CSRF si no existe
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+// 5. Bloqueo para administradores
+if (isset($_SESSION['user_rol']) && strtolower($_SESSION['user_rol']) === 'admin') {
+    header("Location: crud.php");
+    exit();
 }
 
-$conexion = new mysqli("mysql-primary", "app_user", "PasswordSeguro123!", "ecommerce");
+// --- LÓGICA PARA AGREGAR AL CARRITO ---
+$categoriaActiva = (isset($_GET['categoria']) && $_GET['categoria'] === 'zapateria') ? 'zapateria' : 'muebles';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion']) && $_POST['accion'] === 'agregar') {
+    
+    // Validación CSRF limpia
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        header("Location: catalogo.php?categoria=" . $categoriaActiva . "&error=csrf");
+        exit();
+    }
+
+    $id_prod = $_POST['id_producto'];
+    $nombre = $_POST['nombre'];
+    $precio = $_POST['precio'];
+    $cat = $_POST['categoria_prod'];
+    $stock_maximo = $_POST['stock_disponible']; 
+    $llave = $cat . "_" . $id_prod;
+
+    // Verificamos cuántos hay actualmente en el carrito de este producto
+    $cantidad_actual = isset($_SESSION['carrito'][$llave]) ? $_SESSION['carrito'][$llave]['cantidad'] : 0;
+
+    // Solo agregamos si la cantidad en el carrito es menor al stock disponible
+    if ($cantidad_actual < $stock_maximo) {
+        if (isset($_SESSION['carrito'][$llave])) {
+            $_SESSION['carrito'][$llave]['cantidad']++;
+        } else {
+            $_SESSION['carrito'][$llave] = [
+                'id' => $id_prod,
+                'nombre' => $nombre,
+                'precio' => $precio,
+                'categoria' => $cat,
+                'cantidad' => 1
+            ];
+        }
+        setcookie('carrito_guardado', json_encode($_SESSION['carrito']), time() + (86400 * 30), "/");
+        header("Location: catalogo.php?categoria=" . $categoriaActiva . "&agregado=1");
+        exit();
+    } else {
+        // Redirigir con error si ya alcanzó el límite de stock
+        header("Location: catalogo.php?categoria=" . $categoriaActiva . "&error_stock=1");
+        exit();
+    }
+}
+
+// --- CONEXIÓN A BASE DE DATOS ---
+$conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
-    die("Error de conexión a la base de datos.");
+    http_response_code(500);
+    die("Error crítico de conexión a la base de datos.");
 }
 $conexion->set_charset("utf8mb4");
 
-// Detectar qué tabla estamos viendo
-$tablaParam = isset($_GET['tabla']) && $_GET['tabla'] === 'zapateria' ? 'zapateria' : 'muebles';
-$tablaActiva = $tablaParam === 'zapateria' ? 'catalogo_zapateria' : 'catalogo_muebles';
-
-$mensaje = "";
-
-// Lógica para procesar la compra y bajar el stock
-if (isset($_GET['accion']) && $_GET['accion'] === 'comprar' && isset($_GET['id'])) {
-    
-    // NUEVO: Validar Token CSRF al hacer una compra
-    if (!isset($_GET['csrf_token']) || $_GET['csrf_token'] !== $_SESSION['csrf_token']) {
-        die("Error de seguridad: Token CSRF inválido al intentar comprar.");
-    }
-
-    $idProducto = intval($_GET['id']);
-
-    $stmt = $conexion->prepare("UPDATE $tablaActiva SET stock = stock - 1 WHERE id = ? AND stock > 0");
-    $stmt->bind_param("i", $idProducto);
-
-    if ($stmt->execute() && $stmt->affected_rows > 0) {
-        $mensaje = '<div class="alerta exito">¡Compra realizada con éxito! Se descontó 1 unidad del inventario.</div>';
-    } else {
-        $mensaje = '<div class="alerta error">No se pudo realizar la compra o el producto se encuentra agotado.</div>';
-    }
-    $stmt->close();
+if ($categoriaActiva === 'zapateria') {
+    $sql = "SELECT id, modelo AS nombre, tALLA AS detalle, precio, stock FROM catalogo_zapateria";
+} else {
+    $sql = "SELECT id, articulo AS nombre, NULL AS detalle, precio, stock FROM catalogo_muebles";
 }
+$resultado = $conexion->query($sql);
 
-// Consultar los productos
-$resultado = $conexion->query("SELECT * FROM $tablaActiva");
+// Calcular cuántos artículos hay de forma SEGURA
+$total_articulos = 0;
+if (!empty($_SESSION['carrito']) && is_array($_SESSION['carrito'])) {
+    $total_articulos = array_sum(array_column($_SESSION['carrito'], 'cantidad'));
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -75,251 +113,129 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Catálogo - CETI Shop</title>
 <style>
-    * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-    }
-    body {
-        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-        background-color: #f8fafc;
-        color: #1e293b;
-        min-height: 100vh;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; min-height: 100vh; }
+    header { background-color: #ffffff; border-bottom: 1px solid #e2e8f0; padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+    .brand { font-size: 20px; font-weight: 700; color: #2563eb; display: flex; align-items: center; gap: 8px; }
+    .brand span { background: #e0e7ff; color: #3730a3; font-size: 11px; padding: 3px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .user-info { font-size: 14px; color: #64748b; display: flex; align-items: center; gap: 15px; }
+    .user-email { font-weight: 600; color: #334155; }
 
-    /* Header superior */
-    header {
-        background-color: #ffffff;
-        border-bottom: 1px solid #e2e8f0;
-        padding: 15px 40px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    }
-    .brand {
-        font-size: 20px;
-        font-weight: 700;
-        color: #2563eb;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .user-info {
-        font-size: 14px;
-        color: #64748b;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    .user-email {
-        font-weight: 600;
-        color: #334155;
-    }
-    .btn-logout {
-        color: #ef4444;
-        text-decoration: none;
-        font-weight: 600;
-        padding: 6px 12px;
-        border-radius: 6px;
-        background-color: #fef2f2;
-        transition: background 0.2s;
-    }
-    .btn-logout:hover {
-        background-color: #fee2e2;
-    }
+    .btn-carrito { background-color: #10b981; color: white; text-decoration: none; font-weight: 600; padding: 6px 15px; border-radius: 6px; transition: background 0.2s; }
+    .btn-carrito:hover { background-color: #059669; }
 
-    /* Contenedor Principal */
-    .main-container {
-        max-width: 1100px;
-        margin: 40px auto;
-        padding: 0 20px;
-    }
+    .btn-logout { color: #ef4444; text-decoration: none; font-weight: 600; padding: 6px 12px; border-radius: 6px; background-color: #fef2f2; transition: background 0.2s; }
+    .btn-logout:hover { background-color: #fee2e2; }
 
-    /* Tabs de navegación */
-    .tabs-container {
-        display: flex;
-        justify-content: center;
-        gap: 12px;
-        margin-bottom: 30px;
-    }
-    .tab-btn {
-        padding: 10px 24px;
-        text-decoration: none;
-        background-color: #ffffff;
-        color: #64748b;
-        border: 1px solid #cbd5e1;
-        border-radius: 30px;
-        font-weight: 600;
-        font-size: 15px;
-        transition: all 0.2s ease;
-    }
-    .tab-btn:hover {
-        border-color: #2563eb;
-        color: #2563eb;
-    }
-    .tab-btn.activo {
-        background-color: #2563eb;
-        color: #ffffff;
-        border-color: #2563eb;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
-    }
+    .main-container { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+    .mensaje-exito { background: #dcfce7; color: #15803d; padding: 12px; text-align: center; font-weight: 600; margin-bottom: 25px; border-radius: 8px; border: 1px solid #bbf7d0; }
+    .mensaje-error { background: #fee2e2; color: #b91c1c; padding: 12px; text-align: center; font-weight: 600; margin-bottom: 25px; border-radius: 8px; border: 1px solid #fca5a5; }
 
-    /* Grid de Productos */
-    .products-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 24px;
-    }
+    .tabs-container { display: flex; justify-content: center; gap: 12px; margin-bottom: 30px; }
+    .tab-btn { padding: 10px 24px; text-decoration: none; background-color: #ffffff; color: #64748b; border: 1px solid #cbd5e1; border-radius: 30px; font-weight: 600; font-size: 15px; transition: all 0.2s ease; }
+    .tab-btn:hover { border-color: #2563eb; color: #2563eb; }
+    .tab-btn.activo { background-color: #2563eb; color: #ffffff; border-color: #2563eb; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25); }
 
-    /* Cards de Producto */
-    .card {
-        background: #ffffff;
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        padding: 24px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.08);
-    }
-    .card-title {
-        font-size: 18px;
-        font-weight: 700;
-        color: #0f172a;
-        margin-bottom: 8px;
-    }
-    .card-subtitle {
-        font-size: 13px;
-        color: #64748b;
-        margin-bottom: 16px;
-    }
-    .card-price {
-        font-size: 24px;
-        font-weight: 800;
-        color: #0f172a;
-        margin-bottom: 16px;
-    }
+    .grid-productos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 24px; }
+    .card-producto { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03); transition: transform 0.2s, box-shadow 0.2s; }
+    .card-producto:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); }
+    .card-title { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+    .card-subtitle { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+    .stock-info { font-size: 13px; font-weight: 600; color: #0284c7; margin-bottom: 16px; display: flex; align-items: center; gap: 5px;}
 
-    /* Badges de Stock */
-    .badge {
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
-        margin-bottom: 20px;
-        width: fit-content;
-    }
-    .badge-success {
-        background-color: #dcfce7;
-        color: #15803d;
-    }
-    .badge-danger {
-        background-color: #fee2e2;
-        color: #b91c1c;
-    }
+    .card-footer { margin-top: 15px; padding-top: 12px; border-top: 1px solid #f1f5f9; text-align: center; }
+    .precio { font-size: 18px; font-weight: 800; color: #16a34a; display: block; margin-bottom: 15px; }
 
-    /* Botón Comprar */
-    .btn-comprar {
-        display: block;
-        width: 100%;
-        text-align: center;
-        padding: 12px;
-        background-color: #16a34a;
-        color: #ffffff;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: 700;
-        font-size: 15px;
-        transition: background-color 0.2s;
-    }
-    .btn-comprar:hover {
-        background-color: #15803d;
-    }
-    .btn-disabled {
-        background-color: #94a3b8;
-        cursor: not-allowed;
-    }
-    .btn-disabled:hover {
-        background-color: #94a3b8;
-    }
+    .btn-comprar { background-color: #2563eb; color: white; border: none; padding: 10px 12px; border-radius: 6px; font-weight: 600; cursor: pointer; width: 100%; font-size: 14px; transition: background 0.2s; }
+    .btn-comprar:hover { background-color: #1d4ed8; }
 
-    /* Alert */
-    .alerta {
-        max-width: 600px;
-        margin: 0 auto 25px auto;
-        padding: 12px 18px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 600;
-        text-align: center;
-    }
-    .alerta.exito { background-color: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-    .alerta.error { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+    .badge-stock { padding: 6px 12px; border-radius: 12px; font-size: 13px; font-weight: 700; display: inline-block; width: 100%; }
+    .badge-stock.ok { background: #dcfce7; color: #15803d; }
+    .badge-stock.out { background: #fee2e2; color: #b91c1c; }
+
+    .empty-state { text-align: center; padding: 60px 20px; background: #ffffff; border-radius: 12px; border: 1px dashed #cbd5e1; color: #64748b; }
 </style>
 </head>
 <body>
 
 <header>
-    <div class="brand">🛍️ CETI-Shop</div>
+    <div class="brand">
+        🛍️ CETI Shop <span>Catálogo</span>
+    </div>
     <div class="user-info">
-        <span>Sesión activa: <strong class="user-email"><?php echo htmlspecialchars($_SESSION['user_email'] ?? 'Cliente'); ?></strong></span>
+        <span>Usuario: <strong class="user-email"><?php echo htmlspecialchars($_SESSION['user_email'] ?? 'Usuario', ENT_QUOTES, 'UTF-8'); ?></strong></span>
+
+        <a href="carrito.php" class="btn-carrito">🛒 Carrito (<?php echo $total_articulos; ?>)</a>
+
         <a href="logout.php" class="btn-logout">Cerrar Sesión</a>
     </div>
 </header>
 
 <div class="main-container">
+    
+    <!-- ALERTA DE SEGURIDAD CSRF -->
+    <?php if(isset($_GET['error']) && $_GET['error'] === 'csrf'): ?>
+        <div class="mensaje-error">⚠️ Error de seguridad: Token inválido. La acción fue bloqueada para proteger tu cuenta.</div>
+    <?php endif; ?>
 
-    <?php if (!empty($mensaje)) echo $mensaje; ?>
+    <!-- Mensajes de retroalimentación -->
+    <?php if(isset($_GET['agregado'])): ?>
+        <div class="mensaje-exito">✅ ¡Producto agregado al carrito con éxito!</div>
+    <?php endif; ?>
+
+    <?php if(isset($_GET['error_stock'])): ?>
+        <div class="mensaje-error">⚠️ No puedes agregar más. ¡Alcanzaste el límite de stock disponible!</div>
+    <?php endif; ?>
 
     <div class="tabs-container">
-        <a href="catalogo.php?tabla=muebles" class="tab-btn <?php echo $tablaParam === 'muebles' ? 'activo' : ''; ?>">🛋️ Muebles</a>
-        <a href="catalogo.php?tabla=zapateria" class="tab-btn <?php echo $tablaParam === 'zapateria' ? 'activo' : ''; ?>">👟 Zapatería</a>
+        <a href="catalogo.php?categoria=muebles" class="tab-btn <?php echo $categoriaActiva === 'muebles' ? 'activo' : ''; ?>">🛋️ Muebles</a>
+        <a href="catalogo.php?categoria=zapateria" class="tab-btn <?php echo $categoriaActiva === 'zapateria' ? 'activo' : ''; ?>">👟 Zapatería</a>
     </div>
 
-    <div class="products-grid">
-        <?php while($row = $resultado->fetch_assoc()): ?>
-            <?php
-                $nombreProducto = $tablaActiva === 'catalogo_muebles' ? $row['articulo'] : $row['modelo'];
-                $tallaInfo = isset($row['tALLA']) ? "Talla: " . htmlspecialchars($row['tALLA']) : null;
-                $hayStock = $row['stock'] > 0;
-            ?>
-            <div class="card">
-                <div>
-                    <div class="card-title"><?php echo htmlspecialchars($nombreProducto); ?></div>
-                    <?php if ($tallaInfo): ?>
-                        <div class="card-subtitle"><?php echo $tallaInfo; ?></div>
-                    <?php endif; ?>
-
-                    <div class="card-price">$<?php echo number_format($row['precio'], 2); ?></div>
-
+    <?php if ($resultado && $resultado->num_rows > 0): ?>
+        <div class="grid-productos">
+            <?php while($row = $resultado->fetch_assoc()): ?>
+                <div class="card-producto">
                     <div>
-                        <?php if ($hayStock): ?>
-                            <span class="badge badge-success">✓ <?php echo $row['stock']; ?> disponibles</span>
+                        <div class="card-title"><?php echo htmlspecialchars($row['nombre'], ENT_QUOTES, 'UTF-8'); ?></div>
+                        <?php if ($row['detalle']): ?>
+                            <div class="card-subtitle">Talla: <?php echo htmlspecialchars($row['detalle'], ENT_QUOTES, 'UTF-8'); ?></div>
                         <?php else: ?>
-                            <span class="badge badge-danger">✕ Agotado</span>
+                            <div class="card-subtitle">Mueble de alta calidad</div>
+                        <?php endif; ?>
+
+                        <div class="stock-info">
+                            📦 Stock disponible: <?php echo $row['stock']; ?>
+                        </div>
+                    </div>
+
+                    <div class="card-footer">
+                        <span class="precio">$<?php echo number_format($row['precio'], 2); ?></span>
+
+                        <?php if ($row['stock'] > 0): ?>
+                            <form method="POST" action="catalogo.php?categoria=<?php echo $categoriaActiva; ?>">
+                                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                                <input type="hidden" name="accion" value="agregar">
+                                <input type="hidden" name="id_producto" value="<?php echo $row['id']; ?>">
+                                <input type="hidden" name="nombre" value="<?php echo htmlspecialchars($row['nombre'], ENT_QUOTES, 'UTF-8'); ?>">
+                                <input type="hidden" name="precio" value="<?php echo $row['precio']; ?>">
+                                <input type="hidden" name="categoria_prod" value="<?php echo $categoriaActiva; ?>">
+                                <input type="hidden" name="stock_disponible" value="<?php echo $row['stock']; ?>">
+
+                                <button type="submit" class="btn-comprar">🛒 Agregar al carrito</button>
+                            </form>
+                        <?php else: ?>
+                            <span class="badge-stock out">Agotado</span>
                         <?php endif; ?>
                     </div>
                 </div>
-
-                <div>
-                    <?php if ($hayStock): ?>
-                        <!-- NUEVO: Agregamos el Token CSRF directamente en la URL del botón Comprar -->
-                        <a href="catalogo.php?tabla=<?php echo $tablaParam; ?>&accion=comprar&id=<?php echo $row['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="btn-comprar">Comprar</a>
-                    <?php else: ?>
-                        <a href="#" class="btn-comprar btn-disabled" onclick="return false;">Sin Stock</a>
-                    <?php endif; ?>
-                </div>
-            </div>
-        <?php endwhile; ?>
-    </div>
-
+            <?php endwhile; ?>
+        </div>
+    <?php else: ?>
+        <div class="empty-state">
+            <h3>No hay productos disponibles en esta categoría.</h3>
+        </div>
+    <?php endif; ?>
 </div>
 
 </body>

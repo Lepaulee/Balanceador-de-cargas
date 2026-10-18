@@ -1,4 +1,4 @@
-FROM php:8.2-fm-alpine
+FROM php:8.2-fpm
 
 # Instalar extensiones de MySQL y agregar Python 3 con pyotp para el sistema 2FA
 RUN apt-get update && apt-get install -y \
