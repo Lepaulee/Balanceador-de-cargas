@@ -3,7 +3,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-$conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
+$conexion = new mysqli("mysql-primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
     die("Error de conexión a la base de datos.");
 }
@@ -26,7 +26,7 @@ if (isset($_GET['token']) && !empty($_GET['token'])) {
         $usuario = $resultado->fetch_assoc();
         $update_stmt = $conexion->prepare("UPDATE usuarios SET confirmado = 1, token_confirmacion = NULL WHERE id = ?");
         $update_stmt->bind_param("i", $usuario['id']);
-        
+
         if ($update_stmt->execute()) {
             $exito = true;
             $mensaje = "¡Excelente, " . htmlspecialchars($usuario['nombre']) . "! Tu cuenta ha sido confirmada correctamente.";

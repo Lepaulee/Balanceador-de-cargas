@@ -5,7 +5,16 @@ error_reporting(E_ALL);
 
 session_start();
 
-$conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
+// 1. Importar librerías de PHPMailer
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
+
+require 'PHPMailer/src/Exception.php';
+require 'PHPMailer/src/PHPMailer.php';
+require 'PHPMailer/src/SMTP.php';
+
+// Conexión a la base de datos
+$conexion = new mysqli("mysql-primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
     die("Error de conexión a la base de datos.");
 }
@@ -24,31 +33,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $rol = ($email === 'ceti@final.com') ? 'admin' : 'usuario';
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
         $secret = 'N/A';
-        
-        // 1. Generar token único para confirmación
+
+        // Generar token único para confirmación
         $token = bin2hex(random_bytes(32));
 
-        // 2. Insertar usuario con "confirmado = 0" y su token generado
+        // Insertar usuario con "confirmado = 0"
         $stmt = $conexion->prepare("INSERT INTO usuarios (nombre, rol, email, password, secret, confirmado, token_confirmacion) VALUES (?, ?, ?, ?, ?, 0, ?)");
-        
+
         if ($stmt) {
-            // Se actualizan los parámetros: 6 variables ("ssssss")
             $stmt->bind_param("ssssss", $nombre, $rol, $email, $passwordHash, $secret, $token);
-            if ($stmt->execute()) {
+
+            // AGREGAMOS TRY-CATCH AQUÍ PARA EVITAR EL FATAL ERROR
+            try {
+                $stmt->execute();
                 
-                // 3. Simular el envío de correo mostrando el enlace en la pantalla
-                $host = $_SERVER['HTTP_HOST'];
-                $enlace_confirmacion = "http://$host/confirmar.php?token=$token";
-                
-                $mensaje = '
-                <div class="alerta exito" style="text-align:left;">
-                    <p><strong>¡Cuenta creada con éxito!</strong></p>
-                    <p style="margin-top: 10px; font-size:13px;">📥 <em>Simulación de bandeja de entrada:</em><br> 
-                    Para activar tu cuenta y poder iniciar sesión, haz clic en este enlace:</p>
-                    <a href="'.$enlace_confirmacion.'" style="display:inline-block; margin-top:8px; background:#166534; color:white; padding:8px 12px; text-decoration:none; border-radius:4px; font-weight:bold;">Confirmar mi cuenta</a>
-                </div>';
-            } else {
-                $mensaje = '<div class="alerta error">El correo ya se encuentra registrado.</div>';
+                // 2. Configurar y enviar correo con PHPMailer
+                $mail = new PHPMailer(true);
+
+                try {
+                    $mail->isSMTP();
+                    $mail->Host       = 'smtp.gmail.com';
+                    $mail->SMTPAuth   = true;
+                    $mail->Username   = 'a23310011@ceti.mx';
+                    $mail->Password   = 'pzib hwwy soyg hopc';
+                    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+                    $mail->Port       = 587;
+
+                    $mail->setFrom('a23310011@ceti.mx', 'CETI SHOP');
+                    $mail->addAddress($email, $nombre);
+
+                    // Enlace generado con la URL pública de ngrok
+                    $enlace_confirmacion = "https://unnamable-superjet-bulldog.ngrok-free.dev/confirmar.php?token=$token";
+
+                    $mail->isHTML(true);
+                    $mail->Subject = 'Confirma tu cuenta en CETI Shop';
+                    $mail->Body    = "
+                        <h2>¡Hola $nombre!</h2>
+                        <p>Gracias por registrarte en CETI Shop. Para activar tu cuenta, haz clic en el siguiente enlace:</p>
+                        <p><a href='$enlace_confirmacion' style='background:#2563eb; color:white; padding:10px 15px; text-decoration:none; border-radius:5px;'>Confirmar mi cuenta</a></p>
+                    ";
+
+                    $mail->send();
+                    $mensaje = '<div class="alerta exito">¡Registro exitoso! Revisa tu bandeja de entrada o spam para confirmar tu cuenta.</div>';
+                } catch (Exception $e) {
+                    $mensaje = '<div class="alerta error">Cuenta creada, pero hubo un error al enviar el correo: ' . $mail->ErrorInfo . '</div>';
+                }
+            } catch (mysqli_sql_exception $e) {
+                // Si el error es 1062, significa que el correo ya existe
+                if ($e->getCode() === 1062) {
+                    $mensaje = '<div class="alerta error">El correo ya se encuentra registrado.</div>';
+                } else {
+                    $mensaje = '<div class="alerta error">Error en la base de datos: ' . $e->getMessage() . '</div>';
+                }
             }
             $stmt->close();
         }
