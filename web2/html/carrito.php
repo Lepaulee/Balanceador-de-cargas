@@ -10,12 +10,12 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// 2. Generar Token CSRF si no existe
+// 2. Generar Token CSRF si no existe (Mitigación CSRF)
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// 3. Cargar carrito desde sesión o cookie
+// 3. Cargar carrito desde sesión o cookie de forma segura
 if (empty($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
     if (isset($_COOKIE['carrito_guardado'])) {
         $recuperado = json_decode($_COOKIE['carrito_guardado'], true);
@@ -41,8 +41,8 @@ $_SESSION['ultima_actividad'] = time();
 // 5. Procesar acciones (Eliminar, Vaciar, Finalizar)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Validar CSRF visualmente
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+    // Validar CSRF estrictamente
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         header("Location: carrito.php?error=csrf");
         exit();
     }
@@ -50,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $accion = $_POST['accion'] ?? '';
 
     if ($accion === 'eliminar') {
-        $llave = $_POST['llave'] ?? '';
+        $llave = htmlspecialchars($_POST['llave'] ?? '', ENT_QUOTES, 'UTF-8');
         if (isset($_SESSION['carrito'][$llave])) {
             unset($_SESSION['carrito'][$llave]);
         }
@@ -58,8 +58,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['carrito'] = [];
     } elseif ($accion === 'finalizar') {
 
+        // Conexión corregida con guion medio (mysql-primary)
         $conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
         if ($conexion->connect_error) {
+            error_log("Error de BD: " . $conexion->connect_error);
             die("Error crítico de conexión a la base de datos.");
         }
         $conexion->set_charset("utf8mb4");
@@ -71,12 +73,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ticket_html .= "<tr style='background-color: #f2f2f2;'><th>Producto</th><th>Precio</th><th>Cantidad</th><th>Subtotal</th></tr>";
 
         foreach ($_SESSION['carrito'] as $item) {
-            $subtotal = $item['precio'] * $item['cantidad'];
+            $precio_seguro = (float)($item['precio'] ?? 0);
+            $cantidad_segura = (int)($item['cantidad'] ?? 0);
+            $subtotal = $precio_seguro * $cantidad_segura;
             $total_venta += $subtotal;
+
+            $nombre_seguro_email = htmlspecialchars($item['nombre'] ?? '', ENT_QUOTES, 'UTF-8');
+
             $ticket_html .= "<tr>
-                                <td>{$item['nombre']}</td>
-                                <td>$" . number_format($item['precio'], 2) . "</td>
-                                <td>{$item['cantidad']}</td>
+                                <td>{$nombre_seguro_email}</td>
+                                <td>$" . number_format($precio_seguro, 2) . "</td>
+                                <td>{$cantidad_segura}</td>
                                 <td>$" . number_format($subtotal, 2) . "</td>
                              </tr>";
         }
@@ -87,25 +94,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt_venta = $conexion->prepare("INSERT INTO ventas (usuario_id, total) VALUES (?, ?)");
         $stmt_venta->bind_param("id", $_SESSION['user_id'], $total_venta);
         $stmt_venta->execute();
-        $id_venta = $conexion->insert_id; // Sacamos el ID del ticket nuevo
+        $id_venta = $conexion->insert_id;
         $stmt_venta->close();
 
         // --- 3. Guardar detalles y descontar stock ---
         $stmt_detalle = $conexion->prepare("INSERT INTO detalle_ventas (venta_id, producto, cantidad, precio, subtotal) VALUES (?, ?, ?, ?, ?)");
 
         foreach ($_SESSION['carrito'] as $item) {
-            $id_producto = (int)$item['id'];
-            $cantidad_comprada = (int)$item['cantidad'];
-            $precio = $item['precio'];
+            $id_producto = (int)($item['id'] ?? 0);
+            $cantidad_comprada = (int)($item['cantidad'] ?? 0);
+            $precio = (float)($item['precio'] ?? 0);
             $subtotal = $precio * $cantidad_comprada;
-            $nombre_producto = $item['nombre'];
-            $categoria = $item['categoria'];
+            $nombre_producto = htmlspecialchars($item['nombre'] ?? '', ENT_QUOTES, 'UTF-8');
+            $categoria = ($item['categoria'] ?? '') === 'zapateria' ? 'zapateria' : 'muebles';
 
-            // Guardar en detalle_ventas
+            // Guardar detalle
             $stmt_detalle->bind_param("isidd", $id_venta, $nombre_producto, $cantidad_comprada, $precio, $subtotal);
             $stmt_detalle->execute();
 
-            // Descontar stock
+            // Descontar stock dinámicamente de forma segura
             $tabla = ($categoria === 'zapateria') ? "catalogo_zapateria" : "catalogo_muebles";
             $stmt_stock = $conexion->prepare("UPDATE $tabla SET stock = stock - ? WHERE id = ? AND stock >= ?");
             $stmt_stock->bind_param("iii", $cantidad_comprada, $id_producto, $cantidad_comprada);
@@ -114,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $stmt_detalle->close();
 
-        // --- 4. Buscar el correo real del ADMIN (CORREGIDO: usa la columna 'email') ---
+        // --- 4. Buscar el correo real del ADMIN ---
         $resultado_admin = $conexion->query("SELECT email FROM usuarios WHERE LOWER(rol) = 'admin' LIMIT 1");
         $datos_admin = $resultado_admin ? $resultado_admin->fetch_assoc() : null;
         $correo_admin = $datos_admin ? $datos_admin['email'] : 'paulo291204@gmail.com';
@@ -131,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mail->Host       = 'smtp.gmail.com';
             $mail->SMTPAuth   = true;
             $mail->Username   = 'a23310011@ceti.mx';
-            $mail->Password   = 'pzib hwwy soyg hopc'; // <-- PON TU CONTRASEÑA DE APLICACIÓN AQUÍ
+            $mail->Password   = 'pzib hwwy soyg hopc';
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
             $mail->Port       = 587;
 
@@ -163,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $carrito = $_SESSION['carrito'] ?? [];
 $total_general = 0;
 foreach ($carrito as $item) {
-    $total_general += $item['precio'] * $item['cantidad'];
+    $total_general += (float)($item['precio'] ?? 0) * (int)($item['cantidad'] ?? 0);
 }
 ?>
 <!DOCTYPE html>
@@ -248,16 +255,16 @@ foreach ($carrito as $item) {
                 <tbody>
                     <?php foreach ($carrito as $llave => $item): ?>
                         <tr>
-                            <td><strong><?php echo htmlspecialchars($item['nombre'], ENT_QUOTES, 'UTF-8'); ?></strong></td>
-                            <td><?php echo ucfirst($item['categoria']); ?></td>
-                            <td>$<?php echo number_format($item['precio'], 2); ?></td>
-                            <td><?php echo $item['cantidad']; ?></td>
-                            <td><strong>$<?php echo number_format($item['precio'] * $item['cantidad'], 2); ?></strong></td>
+                            <td><strong><?php echo htmlspecialchars($item['nombre'] ?? '', ENT_QUOTES, 'UTF-8'); ?></strong></td>
+                            <td><?php echo ucfirst(htmlspecialchars($item['categoria'] ?? '', ENT_QUOTES, 'UTF-8')); ?></td>
+                            <td>$<?php echo number_format((float)($item['precio'] ?? 0), 2); ?></td>
+                            <td><?php echo (int)($item['cantidad'] ?? 0); ?></td>
+                            <td><strong>$<?php echo number_format((float)($item['precio'] ?? 0) * (int)($item['cantidad'] ?? 0), 2); ?></strong></td>
                             <td>
                                 <form method="POST" style="display:inline;">
                                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                                     <input type="hidden" name="accion" value="eliminar">
-                                    <input type="hidden" name="llave" value="<?php echo $llave; ?>">
+                                    <input type="hidden" name="llave" value="<?php echo htmlspecialchars($llave, ENT_QUOTES, 'UTF-8'); ?>">
                                     <button type="submit" class="btn-eliminar">Eliminar</button>
                                 </form>
                             </td>

@@ -1,35 +1,42 @@
 <?php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+// Mitigación: Information Disclosure (Fuga de información)
+// Apagamos los errores en pantalla para producción.
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
+error_reporting(0);
 
-$conexion = new mysqli("mysql-primary", "app_user", "PasswordSeguro123!", "ecommerce");
+// Host ajustado a mysql_primary para consistencia con tu infraestructura
+$conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
-    die("Error de conexión a la base de datos.");
+    // Registramos el error internamente pero no se lo mostramos al usuario
+    error_log("Error DB en confirmar.php: " . $conexion->connect_error);
+    die("Error de servicio. Por favor, intenta más tarde.");
 }
 $conexion->set_charset("utf8mb4");
 
 $mensaje = "";
 $exito = false;
 
-if (isset($_GET['token']) && !empty($_GET['token'])) {
-    $token = $_GET['token'];
+// Validamos que el token venga en la URL y sea un string
+if (isset($_GET['token']) && is_string($_GET['token']) && !empty(trim($_GET['token']))) {
+    $token = trim($_GET['token']);
 
-    // Buscar si existe un usuario con ese token
+    // Mitigación SQLi: Consulta Preparada (Excelente, ya lo tenías)
     $stmt = $conexion->prepare("SELECT id, nombre FROM usuarios WHERE token_confirmacion = ? AND confirmado = 0");
     $stmt->bind_param("s", $token);
     $stmt->execute();
     $resultado = $stmt->get_result();
 
     if ($resultado->num_rows > 0) {
-        // Si existe, actualizamos su estado a confirmado (1) y borramos el token para que no se reuse
         $usuario = $resultado->fetch_assoc();
+        
         $update_stmt = $conexion->prepare("UPDATE usuarios SET confirmado = 1, token_confirmacion = NULL WHERE id = ?");
         $update_stmt->bind_param("i", $usuario['id']);
 
         if ($update_stmt->execute()) {
             $exito = true;
-            $mensaje = "¡Excelente, " . htmlspecialchars($usuario['nombre']) . "! Tu cuenta ha sido confirmada correctamente.";
+            // Mitigación XSS: Sanitización de salida (Excelente, ya lo tenías)
+            $mensaje = "¡Excelente, " . htmlspecialchars($usuario['nombre'], ENT_QUOTES, 'UTF-8') . "! Tu cuenta ha sido confirmada correctamente.";
         } else {
             $mensaje = "Hubo un error al confirmar tu cuenta. Intenta de nuevo.";
         }
@@ -39,7 +46,7 @@ if (isset($_GET['token']) && !empty($_GET['token'])) {
     }
     $stmt->close();
 } else {
-    $mensaje = "No se proporcionó ningún token de confirmación.";
+    $mensaje = "No se proporcionó ningún token de confirmación válido.";
 }
 $conexion->close();
 ?>

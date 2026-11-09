@@ -22,7 +22,7 @@ if (empty($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
     }
 }
 
-// 4. Control de inactividad
+// 4. Control de inactividad (120s)
 $tiempo_limite = 120;
 if (isset($_SESSION['ultima_actividad'])) {
     $tiempo_transcurrido = time() - $_SESSION['ultima_actividad'];
@@ -45,24 +45,21 @@ if (isset($_SESSION['user_rol']) && strtolower($_SESSION['user_rol']) === 'admin
 $categoriaActiva = (isset($_GET['categoria']) && $_GET['categoria'] === 'zapateria') ? 'zapateria' : 'muebles';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion']) && $_POST['accion'] === 'agregar') {
-    
-    // Validación CSRF limpia
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         header("Location: catalogo.php?categoria=" . $categoriaActiva . "&error=csrf");
         exit();
     }
 
-    $id_prod = $_POST['id_producto'];
-    $nombre = $_POST['nombre'];
-    $precio = $_POST['precio'];
-    $cat = $_POST['categoria_prod'];
-    $stock_maximo = $_POST['stock_disponible']; 
-    $llave = $cat . "_" . $id_prod;
+    $id_prod = (int)$_POST['id_producto'];
+    $precio = (float)$_POST['precio'];
+    $stock_maximo = (int)$_POST['stock_disponible'];
+    $nombre = htmlspecialchars($_POST['nombre'], ENT_QUOTES, 'UTF-8');
+    $cat = ($_POST['categoria_prod'] === 'zapateria') ? 'zapateria' : 'muebles';
 
-    // Verificamos cuántos hay actualmente en el carrito de este producto
+    $llave = $cat . "_" . $id_prod;
     $cantidad_actual = isset($_SESSION['carrito'][$llave]) ? $_SESSION['carrito'][$llave]['cantidad'] : 0;
 
-    // Solo agregamos si la cantidad en el carrito es menor al stock disponible
     if ($cantidad_actual < $stock_maximo) {
         if (isset($_SESSION['carrito'][$llave])) {
             $_SESSION['carrito'][$llave]['cantidad']++;
@@ -79,15 +76,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion']) && $_POST['
         header("Location: catalogo.php?categoria=" . $categoriaActiva . "&agregado=1");
         exit();
     } else {
-        // Redirigir con error si ya alcanzó el límite de stock
         header("Location: catalogo.php?categoria=" . $categoriaActiva . "&error_stock=1");
         exit();
     }
 }
 
-// --- CONEXIÓN A BASE DE DATOS ---
+// --- CONEXIÓN A BASE DE DATOS (Host corregido a mysql-primary) ---
 $conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
+    error_log("Error de BD en catálogo: " . $conexion->connect_error);
     http_response_code(500);
     die("Error crítico de conexión a la base de datos.");
 }
@@ -100,7 +97,6 @@ if ($categoriaActiva === 'zapateria') {
 }
 $resultado = $conexion->query($sql);
 
-// Calcular cuántos artículos hay de forma SEGURA
 $total_articulos = 0;
 if (!empty($_SESSION['carrito']) && is_array($_SESSION['carrito'])) {
     $total_articulos = array_sum(array_column($_SESSION['carrito'], 'cantidad'));
@@ -172,13 +168,11 @@ if (!empty($_SESSION['carrito']) && is_array($_SESSION['carrito'])) {
 </header>
 
 <div class="main-container">
-    
-    <!-- ALERTA DE SEGURIDAD CSRF -->
+
     <?php if(isset($_GET['error']) && $_GET['error'] === 'csrf'): ?>
         <div class="mensaje-error">⚠️ Error de seguridad: Token inválido. La acción fue bloqueada para proteger tu cuenta.</div>
     <?php endif; ?>
 
-    <!-- Mensajes de retroalimentación -->
     <?php if(isset($_GET['agregado'])): ?>
         <div class="mensaje-exito">✅ ¡Producto agregado al carrito con éxito!</div>
     <?php endif; ?>

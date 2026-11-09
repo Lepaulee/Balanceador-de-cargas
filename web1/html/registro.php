@@ -1,7 +1,12 @@
 <?php
+// En producción, cambiar a 0
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
+
+ini_set('session.use_strict_mode', '1');
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Lax');
 
 session_start();
 
@@ -13,22 +18,44 @@ require 'PHPMailer/src/Exception.php';
 require 'PHPMailer/src/PHPMailer.php';
 require 'PHPMailer/src/SMTP.php';
 
+/* =========================================================
+   GENERACIÓN DEL TOKEN CSRF
+   ========================================================= */
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Conexión a la base de datos
-$conexion = new mysqli("mysql-primary", "app_user", "PasswordSeguro123!", "ecommerce");
+$conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
+
+// Mitigación: Information Disclosure
 if ($conexion->connect_error) {
-    die("Error de conexión a la base de datos.");
+    error_log("Error de DB en registro.php: " . $conexion->connect_error);
+    http_response_code(500);
+    die("Error crítico de servicio. Intenta más tarde.");
 }
 $conexion->set_charset("utf8mb4");
 
 $mensaje = "";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    // VALIDACIÓN CSRF
+    $tokenRecibido = $_POST['csrf_token'] ?? '';
+    if (empty($tokenRecibido) || !hash_equals($_SESSION['csrf_token'], $tokenRecibido)) {
+        http_response_code(403);
+        die("<h1 style='color:red; text-align:center; margin-top:50px;'>❌ ERROR 403: Intento de CSRF Detectado</h1>");
+    }
+
     $nombre = trim($_POST['nombre']);
     $email = trim($_POST['email']);
     $password = $_POST['password'];
 
+    // Validaciones básicas
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $mensaje = '<div class="alerta error">Formato de correo no válido.</div>';
+        $mensaje = '<div class="alerta error">Formato de correo electrónico inválido.</div>';
+    } elseif (strlen($password) < 8) {
+        $mensaje = '<div class="alerta error">La contraseña debe tener al menos 8 caracteres.</div>';
     } else {
         $rol = ($email === 'ceti@final.com') ? 'admin' : 'usuario';
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
@@ -43,10 +70,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt) {
             $stmt->bind_param("ssssss", $nombre, $rol, $email, $passwordHash, $secret, $token);
 
-            // AGREGAMOS TRY-CATCH AQUÍ PARA EVITAR EL FATAL ERROR
             try {
                 $stmt->execute();
-                
+
                 // 2. Configurar y enviar correo con PHPMailer
                 $mail = new PHPMailer(true);
 
@@ -60,33 +86,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $mail->Port       = 587;
 
                     $mail->setFrom('a23310011@ceti.mx', 'CETI SHOP');
-                    $mail->addAddress($email, $nombre);
+                    $mail->addAddress($email, htmlspecialchars($nombre, ENT_QUOTES, 'UTF-8'));
 
-                    // Enlace generado con la URL pública de ngrok
-                    $enlace_confirmacion = "https://unnamable-superjet-bulldog.ngrok-free.dev/confirmar.php?token=$token";
+                    // Enlace generado dinámicamente según el host actual
+                    $protocolo = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
+                    $host = $_SERVER['HTTP_HOST'];
+                    $enlace_confirmacion = "$protocolo://$host/confirmar.php?token=$token";
 
                     $mail->isHTML(true);
                     $mail->Subject = 'Confirma tu cuenta en CETI Shop';
                     $mail->Body    = "
-                        <h2>¡Hola $nombre!</h2>
+                        <h2>¡Hola " . htmlspecialchars($nombre, ENT_QUOTES, 'UTF-8') . "!</h2>
                         <p>Gracias por registrarte en CETI Shop. Para activar tu cuenta, haz clic en el siguiente enlace:</p>
-                        <p><a href='$enlace_confirmacion' style='background:#2563eb; color:white; padding:10px 15px; text-decoration:none; border-radius:5px;'>Confirmar mi cuenta</a></p>
+                        <p><br><a href='$enlace_confirmacion' style='background:#2563eb; color:white; padding:10px 15px; text-decoration:none; border-radius:5px;'>Confirmar mi cuenta</a><br><br></p>
+                        <p><small>Si no solicitaste este registro, ignora este mensaje.</small></p>
                     ";
 
                     $mail->send();
                     $mensaje = '<div class="alerta exito">¡Registro exitoso! Revisa tu bandeja de entrada o spam para confirmar tu cuenta.</div>';
                 } catch (Exception $e) {
-                    $mensaje = '<div class="alerta error">Cuenta creada, pero hubo un error al enviar el correo: ' . $mail->ErrorInfo . '</div>';
+                    error_log("Error de correo en registro: " . $mail->ErrorInfo);
+                    $mensaje = '<div class="alerta error">Cuenta creada, pero hubo un problema interno al enviar el correo.</div>';
                 }
             } catch (mysqli_sql_exception $e) {
-                // Si el error es 1062, significa que el correo ya existe
+                // Código 1062 = Duplicate entry (Correo ya existe)
                 if ($e->getCode() === 1062) {
-                    $mensaje = '<div class="alerta error">El correo ya se encuentra registrado.</div>';
+                    $mensaje = '<div class="alerta error">Este correo electrónico ya se encuentra registrado.</div>';
                 } else {
-                    $mensaje = '<div class="alerta error">Error en la base de datos: ' . $e->getMessage() . '</div>';
+                    error_log("Error DB al registrar: " . $e->getMessage());
+                    $mensaje = '<div class="alerta error">Ocurrió un error interno en el servidor. Inténtalo más tarde.</div>';
                 }
             }
             $stmt->close();
+        } else {
+            error_log("Error preparando sentencia en registro: " . $conexion->error);
+            $mensaje = '<div class="alerta error">Ocurrió un error al procesar tu solicitud.</div>';
         }
     }
 }
@@ -123,6 +157,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if (!empty($mensaje)) echo $mensaje; ?>
 
     <form method="POST" action="registro.php">
+        <!-- CAMPO OCULTO CSRF -->
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
+
         <div class="grupo-campo">
             <label for="nombre">Nombre completo</label>
             <input type="text" id="nombre" name="nombre" placeholder="Nombre completo" required>
@@ -136,6 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="grupo-campo">
             <label for="password">Contraseña</label>
             <input type="password" id="password" name="password" placeholder="••••••••" required>
+            <small style="color: #64748b; font-size: 12px;">Mínimo 8 caracteres.</small>
         </div>
 
         <button type="submit" class="btn-submit">Registrarse</button>

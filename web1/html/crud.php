@@ -1,19 +1,19 @@
 <?php
 session_start();
 
-// 1. Candado de sesión activa
+// 1. Candado de sesión activa (Bloque 2)
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
-// 2. Candado de ROL (Insensible a mayúsculas)
+// 2. Candado de ROL Admin (Bloque 2)
 if (!isset($_SESSION['user_rol']) || strtolower($_SESSION['user_rol']) !== 'admin') {
     header("Location: catalogo.php");
     exit();
 }
 
-// 3. Destruir la sesión después de 2 minutos (120 segundos) de inactividad
+// 3. Control de inactividad - 120 segundos (Bloque 2)
 $tiempo_limite = 120;
 if (isset($_SESSION['ultima_actividad'])) {
     $tiempo_transcurrido = time() - $_SESSION['ultima_actividad'];
@@ -26,20 +26,21 @@ if (isset($_SESSION['ultima_actividad'])) {
 }
 $_SESSION['ultima_actividad'] = time();
 
-// 4. Generar Token CSRF si no existe en la sesión
+// 4. Generar Token CSRF (Bloque 2)
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// --- CONEXIÓN A BASE DE DATOS ---
+// --- CONEXIÓN A BASE DE DATOS CON mysql_primary ---
 $conexion = new mysqli("mysql_primary", "app_user", "PasswordSeguro123!", "ecommerce");
 if ($conexion->connect_error) {
+    error_log("Error de DB en crud.php: " . $conexion->connect_error);
     http_response_code(500);
-    die("Error crítico de conexión a la base de datos.");
+    die("Error crítico de servicio. Intenta más tarde.");
 }
 $conexion->set_charset("utf8mb4");
 
-// Detectar qué tabla estamos viendo (Muebles, Zapatería o Usuarios)
+// Mitigación ISQL: Lista blanca estricta para la tabla de destino (Bloque 2)
 $tablaUrl = $_GET['tabla'] ?? 'muebles';
 if ($tablaUrl === 'zapateria') {
     $tablaActiva = 'catalogo_zapateria';
@@ -50,10 +51,11 @@ if ($tablaUrl === 'zapateria') {
     $tablaUrl = 'muebles';
 }
 
-// Lógica de Eliminación (Delete)
+// --- LÓGICA DE ELIMINACIÓN (DELETE) ---
 if (isset($_GET['eliminar'])) {
     $tokenGet = $_GET['csrf_token'] ?? '';
 
+    // Validar CSRF
     if (empty($tokenGet) || !hash_equals($_SESSION['csrf_token'], $tokenGet)) {
         header("Location: crud.php?tabla=" . $tablaUrl . "&error=csrf");
         exit();
@@ -61,12 +63,13 @@ if (isset($_GET['eliminar'])) {
 
     $idEliminar = intval($_GET['eliminar']);
     
-    // Evitar que el admin se elimine a sí mismo
+    // Protección RBAC: El admin no puede eliminarse a sí mismo
     if ($tablaActiva === 'usuarios' && $idEliminar === intval($_SESSION['user_id'])) {
         header("Location: crud.php?tabla=usuarios&error=self_delete");
         exit();
     }
 
+    // Mitigación ISQL: Prepared statement
     $stmtDel = $conexion->prepare("DELETE FROM $tablaActiva WHERE id = ?");
     if ($stmtDel) {
         $stmtDel->bind_param("i", $idEliminar);
@@ -74,14 +77,15 @@ if (isset($_GET['eliminar'])) {
         $stmtDel->close();
     }
 
-    header("Location: crud.php?tabla=" . $tablaUrl);
+    header("Location: crud.php?tabla=" . htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'));
     exit();
 }
 
-// Lógica de Inserción (Create) y Actualización (Update)
+// --- LÓGICA DE INSERCIÓN (CREATE) Y ACTUALIZACIÓN (UPDATE) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
     $tokenPost = $_POST['csrf_token'] ?? '';
 
+    // Validar CSRF
     if (empty($tokenPost) || !hash_equals($_SESSION['csrf_token'], $tokenPost)) {
         header("Location: crud.php?tabla=" . $tablaUrl . "&error=csrf");
         exit();
@@ -116,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
             $rol = trim($_POST['rol'] ?? 'cliente');
             $confirmado = intval($_POST['confirmado'] ?? 0);
             
-            // Evitar que el admin se quite su propio rol de admin accidentalmente
+            // Protección RBAC: Prevenir degradación accidental del propio admin
             if ($idUpdate === intval($_SESSION['user_id']) && $rol !== 'admin') {
                 $rol = 'admin'; 
             }
@@ -151,20 +155,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
             }
         }
     }
-    header("Location: crud.php?tabla=" . $tablaUrl);
+    header("Location: crud.php?tabla=" . htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'));
     exit();
 }
 
-// Lógica para cargar datos a Editar
+// --- CONSULTA PARA EDICIÓN ---
 $registroEditar = null;
 if (isset($_GET['editar'])) {
     $idEditar = intval($_GET['editar']);
-    $resEdit = $conexion->query("SELECT * FROM $tablaActiva WHERE id = $idEditar");
-    if ($resEdit && $resEdit->num_rows > 0) {
-        $registroEditar = $resEdit->fetch_assoc();
+    $stmtEdit = $conexion->prepare("SELECT * FROM $tablaActiva WHERE id = ?");
+    if ($stmtEdit) {
+        $stmtEdit->bind_param("i", $idEditar);
+        $stmtEdit->execute();
+        $resEdit = $stmtEdit->get_result();
+        if ($resEdit && $resEdit->num_rows > 0) {
+            $registroEditar = $resEdit->fetch_assoc();
+        }
+        $stmtEdit->close();
     }
 }
 
+// Lectura de la tabla activa (Nombre estricto desde lista blanca)
 $resultado = $conexion->query("SELECT * FROM $tablaActiva");
 ?>
 <!DOCTYPE html>
@@ -229,6 +240,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
     </div>
     <div class="user-info">
         <span>Admin: <strong class="user-email"><?php echo htmlspecialchars($_SESSION['user_email'] ?? 'Admin', ENT_QUOTES, 'UTF-8'); ?></strong></span>
+        <a href="reporte_ventas.php" style="color: #2563eb; text-decoration: none; font-weight: 600; margin-right: 10px;">📊 Reportes</a>
         <a href="logout.php" class="btn-logout">Cerrar Sesión</a>
     </div>
 </header>
@@ -254,16 +266,16 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
         <h3>
             <?php 
             if ($tablaActiva === 'usuarios') echo '✏️ Editar Usuario: ' . htmlspecialchars($registroEditar['email'], ENT_QUOTES, 'UTF-8');
-            elseif ($registroEditar) echo '✏️ Editar Registro'; 
-            else echo '➕ Agregar a ' . ($tablaActiva === 'catalogo_muebles' ? 'Catálogo de Muebles' : 'Zapatería'); 
+            elseif ($registroEditar) echo '✏️ Editar Registro';
+            else echo '➕ Agregar a ' . ($tablaActiva === 'catalogo_muebles' ? 'Catálogo de Muebles' : 'Zapatería');
             ?>
         </h3>
 
-        <form method="POST" action="crud.php?tabla=<?php echo $tablaUrl; ?>">
+        <form method="POST" action="crud.php?tabla=<?php echo htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'); ?>">
             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8'); ?>">
             <input type="hidden" name="accion" value="<?php echo $registroEditar ? 'editar' : 'crear'; ?>">
             <?php if ($registroEditar): ?>
-                <input type="hidden" name="id" value="<?php echo intval($registroEditar['id']); ?>">
+                <input type="hidden" name="id" value="<?php echo (int)$registroEditar['id']; ?>">
             <?php endif; ?>
 
             <div class="form-grid">
@@ -295,7 +307,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
                         </div>
                         <div class="grupo-campo">
                             <label for="talla">Talla</label>
-                            <input type="text" id="talla" name="talla" value="<?php echo $registroEditar ? htmlspecialchars($registroEditar['tALLA'], ENT_QUOTES, 'UTF-8') : ''; ?>" required>
+                            <input type="text" id="talla" name="talla" value="<?php echo $registroEditar ? htmlspecialchars($registroEditar['tALLA'] ?? $registroEditar['talla'] ?? '', ENT_QUOTES, 'UTF-8') : ''; ?>" required>
                         </div>
                     <?php endif; ?>
 
@@ -315,7 +327,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
                     <?php echo $registroEditar ? 'Actualizar Registro' : 'Guardar Registro'; ?>
                 </button>
                 <?php if ($registroEditar): ?>
-                    <a href="crud.php?tabla=<?php echo $tablaUrl; ?>" class="btn-cancelar">Cancelar Edición</a>
+                    <a href="crud.php?tabla=<?php echo htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'); ?>" class="btn-cancelar">Cancelar Edición</a>
                 <?php endif; ?>
             </div>
         </form>
@@ -328,7 +340,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
             <h3>
                 <?php 
                 if ($tablaActiva === 'usuarios') echo '👥 Gestión de Usuarios Registrados';
-                else echo '📦 Inventario Actual de ' . ($tablaActiva === 'catalogo_muebles' ? 'Muebles' : 'Zapatería'); 
+                else echo '📦 Inventario Actual de ' . ($tablaActiva === 'catalogo_muebles' ? 'Muebles' : 'Zapatería');
                 ?>
             </h3>
         </div>
@@ -357,44 +369,48 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
                 <?php if ($resultado && $resultado->num_rows > 0): ?>
                     <?php while($row = $resultado->fetch_assoc()): ?>
                     <tr>
-                        <td><strong>#<?php echo intval($row['id']); ?></strong></td>
-                        
+                        <td><strong>#<?php echo (int)$row['id']; ?></strong></td>
+
                         <?php if ($tablaActiva === 'usuarios'): ?>
                             <td><?php echo htmlspecialchars($row['email'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td>
-                                <span class="badge-stock <?php echo $row['rol'] === 'admin' ? 'admin' : ''; ?>">
-                                    <?php echo strtoupper(htmlspecialchars($row['rol'], ENT_QUOTES, 'UTF-8')); ?>
+                                <span class="badge-stock <?php echo strtolower($row['rol']) === 'admin' ? 'admin' : ''; ?>">
+                                    <?php echo ucfirst(htmlspecialchars($row['rol'], ENT_QUOTES, 'UTF-8')); ?>
                                 </span>
                             </td>
                             <td>
                                 <span class="badge-stock <?php echo $row['confirmado'] == 1 ? 'ok' : 'low'; ?>">
-                                    <?php echo $row['confirmado'] == 1 ? 'Activo' : 'Bloqueado'; ?>
+                                    <?php echo $row['confirmado'] == 1 ? 'Activo' : 'Inactivo'; ?>
+                                </span>
+                            </td>
+                        <?php elseif ($tablaActiva === 'catalogo_muebles'): ?>
+                            <td><?php echo htmlspecialchars($row['articulo'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td>$<?php echo number_format((float)$row['precio'], 2); ?></td>
+                            <td>
+                                <span class="badge-stock <?php echo $row['stock'] > 0 ? 'ok' : 'low'; ?>">
+                                    <?php echo (int)$row['stock']; ?>
                                 </span>
                             </td>
                         <?php else: ?>
-                            <?php if ($tablaActiva === 'catalogo_muebles'): ?>
-                                <td><?php echo htmlspecialchars($row['articulo'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <?php else: ?>
-                                <td><?php echo htmlspecialchars($row['modelo'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td><?php echo htmlspecialchars($row['tALLA'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <?php endif; ?>
-                            <td><strong>$<?php echo number_format($row['precio'], 2); ?></strong></td>
+                            <td><?php echo htmlspecialchars($row['modelo'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo htmlspecialchars($row['tALLA'] ?? $row['talla'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td>$<?php echo number_format((float)$row['precio'], 2); ?></td>
                             <td>
                                 <span class="badge-stock <?php echo $row['stock'] > 0 ? 'ok' : 'low'; ?>">
-                                    <?php echo intval($row['stock']); ?> unid.
+                                    <?php echo (int)$row['stock']; ?>
                                 </span>
                             </td>
                         <?php endif; ?>
 
                         <td style="text-align: center;">
-                            <a href="crud.php?tabla=<?php echo $tablaUrl; ?>&editar=<?php echo intval($row['id']); ?>" class="action-btn btn-tabla-editar">Editar</a>
-                            <a href="crud.php?tabla=<?php echo $tablaUrl; ?>&eliminar=<?php echo intval($row['id']); ?>&csrf_token=<?php echo urlencode($_SESSION['csrf_token']); ?>" class="action-btn btn-tabla-eliminar" onclick="return confirm('¿Seguro que deseas eliminar este registro?');">Eliminar</a>
+                            <a href="crud.php?tabla=<?php echo htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'); ?>&editar=<?php echo (int)$row['id']; ?>" class="action-btn btn-tabla-editar">Editar</a>
+                            <a href="crud.php?tabla=<?php echo htmlspecialchars($tablaUrl, ENT_QUOTES, 'UTF-8'); ?>&eliminar=<?php echo (int)$row['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn btn-tabla-eliminar" onclick="return confirm('¿Estás seguro de eliminar este registro?');">Eliminar</a>
                         </td>
                     </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="6" style="text-align: center; padding: 20px;">No hay registros en esta tabla.</td>
+                        <td colspan="6" style="text-align: center; color: #64748b; padding: 25px;">No hay registros disponibles en esta sección.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>

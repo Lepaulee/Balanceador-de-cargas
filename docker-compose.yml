@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   haproxy:
     image: haproxy:2.9-alpine
     container_name: lb_haproxy
     ports:
-      - "8080:8080"       # Tráfico HTTP balanceado (Corregido para no chocar con Apache)
-      - "3306:3306"     # Tráfico MySQL balanceado
-      - "8404:8404"     # Dashboard de estadísticas
+      - "8080:8080"
+      - "3306:3306"
+      - "8404:8404"
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     depends_on:
@@ -21,6 +19,11 @@ services:
       lb_network:
         ipv4_address: 192.168.100.10
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   web1:
     build: .
@@ -29,10 +32,18 @@ services:
       - ./web1/html:/var/www/html:ro
     environment:
       - TZ=America/Mexico_City
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
     networks:
       lb_network:
         ipv4_address: 192.168.100.11
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   web2:
     build: .
@@ -41,10 +52,18 @@ services:
       - ./web2/html:/var/www/html:ro
     environment:
       - TZ=America/Mexico_City
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
     networks:
       lb_network:
         ipv4_address: 192.168.100.12
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mysql-primary:
     image: mysql:8.0
@@ -63,10 +82,21 @@ services:
     volumes:
       - mysql_primary_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pRootSuperSeguro2026!"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     networks:
       lb_network:
         ipv4_address: 192.168.100.13
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mysql-replica:
     image: mysql:8.0
@@ -79,12 +109,20 @@ services:
       - --binlog-format=ROW
     environment:
       MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
     volumes:
       - mysql_replica_data:/var/lib/mysql
     networks:
       lb_network:
         ipv4_address: 192.168.100.14
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mysql-replica-2:
     image: mysql:8.0
@@ -97,12 +135,20 @@ services:
       - --binlog-format=ROW
     environment:
       MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
     volumes:
       - mysql_replica_2_data:/var/lib/mysql
     networks:
       lb_network:
         ipv4_address: 192.168.100.15
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mysql-replica-3:
     image: mysql:8.0
@@ -115,12 +161,20 @@ services:
       - --binlog-format=ROW
     environment:
       MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
+    depends_on:
+      mysql-primary:
+        condition: service_healthy
     volumes:
       - mysql_replica_3_data:/var/lib/mysql
     networks:
       lb_network:
         ipv4_address: 192.168.100.16
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   lb_network:
