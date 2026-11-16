@@ -1,1 +1,8 @@
 DirectoryIndex login.php
+
+AddType application/javascript .js
+
+<FilesMatch "\.(js|css|png|jpg|jpeg|gif|ico|svg)$">
+    SetHandler default-handler
+    Require all granted
+</FilesMatch>

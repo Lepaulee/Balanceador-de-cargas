@@ -93,3 +93,7 @@ $conexion->close();
     <?php endif; ?>
 </body>
 </html>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>

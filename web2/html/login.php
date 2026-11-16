@@ -349,3 +349,4 @@ $mostrarQR = $_SESSION['mostrar_qr'] ?? false;
 
 </body>
 </html>
+<script src="/chat.js"></script>

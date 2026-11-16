@@ -62,7 +62,7 @@ if (isset($_GET['eliminar'])) {
     }
 
     $idEliminar = intval($_GET['eliminar']);
-    
+
     // Protección RBAC: El admin no puede eliminarse a sí mismo
     if ($tablaActiva === 'usuarios' && $idEliminar === intval($_SESSION['user_id'])) {
         header("Location: crud.php?tabla=usuarios&error=self_delete");
@@ -119,10 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion'])) {
         if ($tablaActiva === 'usuarios') {
             $rol = trim($_POST['rol'] ?? 'cliente');
             $confirmado = intval($_POST['confirmado'] ?? 0);
-            
+
             // Protección RBAC: Prevenir degradación accidental del propio admin
             if ($idUpdate === intval($_SESSION['user_id']) && $rol !== 'admin') {
-                $rol = 'admin'; 
+                $rol = 'admin';
             }
 
             $stmtUp = $conexion->prepare("UPDATE usuarios SET rol = ?, confirmado = ? WHERE id = ?");
@@ -264,7 +264,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
     <?php if ($tablaActiva !== 'usuarios' || ($tablaActiva === 'usuarios' && $registroEditar)): ?>
     <div class="card-form">
         <h3>
-            <?php 
+            <?php
             if ($tablaActiva === 'usuarios') echo '✏️ Editar Usuario: ' . htmlspecialchars($registroEditar['email'], ENT_QUOTES, 'UTF-8');
             elseif ($registroEditar) echo '✏️ Editar Registro';
             else echo '➕ Agregar a ' . ($tablaActiva === 'catalogo_muebles' ? 'Catálogo de Muebles' : 'Zapatería');
@@ -338,7 +338,7 @@ $resultado = $conexion->query("SELECT * FROM $tablaActiva");
     <div class="card-table">
         <div class="card-table-header">
             <h3>
-                <?php 
+                <?php
                 if ($tablaActiva === 'usuarios') echo '👥 Gestión de Usuarios Registrados';
                 else echo '📦 Inventario Actual de ' . ($tablaActiva === 'catalogo_muebles' ? 'Muebles' : 'Zapatería');
                 ?>

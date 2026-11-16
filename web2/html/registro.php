@@ -184,3 +184,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 </body>
 </html>
+<script src="/chat.js"></script>

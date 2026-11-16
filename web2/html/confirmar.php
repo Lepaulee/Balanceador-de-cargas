@@ -87,3 +87,4 @@ $conexion->close();
 
 </body>
 </html>
+<script src="/chat.js"></script>

@@ -232,5 +232,6 @@ if (!empty($_SESSION['carrito']) && is_array($_SESSION['carrito'])) {
     <?php endif; ?>
 </div>
 
+<script src="/chat.js"></script>
 </body>
 </html>

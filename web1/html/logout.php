@@ -28,3 +28,7 @@ setcookie("jwt_token", "", time() - 3600, "/", "", false, true);
 header("Location: login.php?logout=1");
 exit();
 ?>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>

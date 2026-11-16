@@ -296,3 +296,7 @@ foreach ($carrito as $item) {
 
 </body>
 </html>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
+<script src="/chat.js"></script>
