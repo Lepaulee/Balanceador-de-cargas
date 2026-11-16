@@ -12,13 +12,11 @@ services:
       - web1
       - web2
       - mysql-primary
-      - mysql-replica
-      - mysql-replica-2
-      - mysql-replica-3
     networks:
       lb_network:
         ipv4_address: 192.168.100.10
-    restart: unless-stopped
+    restart: "no"
+    mem_limit: 128m
     logging:
       driver: "json-file"
       options:
@@ -29,7 +27,7 @@ services:
     build: .
     container_name: web1
     volumes:
-      - ./web1/html:/var/www/html:ro
+      - ./web1/html:/var/www/html
     environment:
       - TZ=America/Mexico_City
     depends_on:
@@ -38,7 +36,8 @@ services:
     networks:
       lb_network:
         ipv4_address: 192.168.100.11
-    restart: unless-stopped
+    restart: "no"
+    mem_limit: 256m
     logging:
       driver: "json-file"
       options:
@@ -49,7 +48,7 @@ services:
     build: .
     container_name: web2
     volumes:
-      - ./web2/html:/var/www/html:ro
+      - ./web2/html:/var/www/html
     environment:
       - TZ=America/Mexico_City
     depends_on:
@@ -58,7 +57,8 @@ services:
     networks:
       lb_network:
         ipv4_address: 192.168.100.12
-    restart: unless-stopped
+    restart: "no"
+    mem_limit: 256m
     logging:
       driver: "json-file"
       options:
@@ -91,85 +91,78 @@ services:
     networks:
       lb_network:
         ipv4_address: 192.168.100.13
-    restart: unless-stopped
+    restart: "no"
+    mem_limit: 768m
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  mysql-replica:
-    image: mysql:8.0
-    container_name: mysql_replica
-    command:
-      - --server-id=2
-      - --log-bin=mysql-bin
-      - --gtid-mode=ON
-      - --enforce-gtid-consistency=ON
-      - --binlog-format=ROW
-    environment:
-      MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
-    depends_on:
-      mysql-primary:
-        condition: service_healthy
+  # Réplicas comentadas para evitar colapsar la RAM durante el inicio
+  # mysql-replica:
+  #   image: mysql:8.0
+  #   container_name: mysql_replica
+  #   command:
+  #     - --server-id=2
+  #     - --log-bin=mysql-bin
+  #     - --gtid-mode=ON
+  #     - --enforce-gtid-consistency=ON
+  #     - --binlog-format=ROW
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
+  #   depends_on:
+  #     mysql-primary:
+  #       condition: service_healthy
+  #   volumes:
+  #     - mysql_replica_data:/var/lib/mysql
+  #   networks:
+  #     lb_network:
+  #       ipv4_address: 192.168.100.14
+  #   restart: "no"
+  #   mem_limit: 512m
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+
+  # mysql-replica-2:
+  #   ... (Desactivada para ahorrar memoria)
+
+  # mysql-replica-3:
+  #   ... (Desactivada para ahorrar memoria)
+
+  ollama:
+    image: ollama/ollama
+    container_name: ia_ollama
     volumes:
-      - mysql_replica_data:/var/lib/mysql
+      - ollama_data:/root/.ollama
     networks:
       lb_network:
-        ipv4_address: 192.168.100.14
-    restart: unless-stopped
+        ipv4_address: 192.168.100.20
+    restart: "no"
+    mem_limit: 2g
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  mysql-replica-2:
-    image: mysql:8.0
-    container_name: mysql_replica_2
-    command:
-      - --server-id=3
-      - --log-bin=mysql-bin
-      - --gtid-mode=ON
-      - --enforce-gtid-consistency=ON
-      - --binlog-format=ROW
+  vector_db:
+    image: chromadb/chroma
+    container_name: ia_vectores
     environment:
-      MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
-    depends_on:
-      mysql-primary:
-        condition: service_healthy
+      - IS_PERSISTENT=TRUE
+    ports:
+      - "8000:8000"
     volumes:
-      - mysql_replica_2_data:/var/lib/mysql
+      - chroma_data:/chroma/chroma
     networks:
       lb_network:
-        ipv4_address: 192.168.100.15
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  mysql-replica-3:
-    image: mysql:8.0
-    container_name: mysql_replica_3
-    command:
-      - --server-id=4
-      - --log-bin=mysql-bin
-      - --gtid-mode=ON
-      - --enforce-gtid-consistency=ON
-      - --binlog-format=ROW
-    environment:
-      MYSQL_ROOT_PASSWORD: RootSuperSeguro2026!
-    depends_on:
-      mysql-primary:
-        condition: service_healthy
-    volumes:
-      - mysql_replica_3_data:/var/lib/mysql
-    networks:
-      lb_network:
-        ipv4_address: 192.168.100.16
-    restart: unless-stopped
+        ipv4_address: 192.168.100.21
+    restart: "no"
+    mem_limit: 512m
     logging:
       driver: "json-file"
       options:
@@ -190,3 +183,5 @@ volumes:
   mysql_replica_data:
   mysql_replica_2_data:
   mysql_replica_3_data:
+  ollama_data:
+  chroma_data:
